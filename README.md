@@ -22,14 +22,13 @@
 基线：Node.js **22.18+**、DSH **0.2.0-rc.2**、Cordis **4.0.5**。直接使用这些版本的接口，不提供旧版兼容层。
 
 ```bash
-dsh plugin --profile web add github:xindong/dsh-canvas
 dsh plugin --profile web add github:xindong/dsh-client-canvas
 dsh web
 ```
 
-已在运行 DSH 时，安装或更新后重启进程，刷新浏览器。只需要后端工具时可只安装本包，但宿主仍需提供 `tools` 和 `systemPrompt` 服务。插件配置补丁由包内 `cordis.patch.yml` 提供。
+Web 组合包会安装本包并按顺序启用画布服务与界面，用户无需单独安装 Core。只需要后端工具时才单独安装本包：`dsh plugin --profile web add github:xindong/dsh-canvas`，宿主仍需提供 `tools` 和 `systemPrompt` 服务。两种安装方式都共用原有画布目录；不要同时启用 Core 自己的组合包和 Web 中的 Core 条目。已在运行 DSH 时，安装或更新后重启进程，刷新浏览器。插件配置补丁由包内 `cordis.patch.yml` 提供。
 
-本地开发：将两个仓库克隆到同一父目录，分别通过绝对路径安装；运行 Web 仓库的 `pnpm sync:runtime` 同步源码。详细步骤见 Web 仓库 README。
+本地开发：将两个仓库克隆到同一父目录，运行 Web 仓库的 `pnpm sync:runtime` 同步源码；profile 中只启用 Web 组合包，它会加载两个插件条目。详细步骤见 Web 仓库 README。
 
 ## Agent 工具
 
