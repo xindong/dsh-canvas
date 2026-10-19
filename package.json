@@ -21,11 +21,12 @@
     }
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=4.0.1",
-    "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1"
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2"
   },
   "license": "MIT",
   "repository": {
@@ -34,5 +35,18 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/xindong/dsh-canvas/issues"
+  },
+  "homepage": "https://github.com/xindong/dsh-canvas#readme",
+  "keywords": [
+    "deepseek-harness",
+    "canvas",
+    "agent",
+    "pixiboardjs"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
   }
 }
