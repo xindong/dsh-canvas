@@ -19,7 +19,7 @@
 
 ## 安装
 
-基线：Node.js **22.18+**、DSH **0.2.0-rc.2**、Cordis **4.0.5**。直接使用这些版本的接口，不提供旧版兼容层。
+基线：Node.js **22.18+**、DSH **>=0.2.0-rc.2 <0.3.0**、Cordis **4.0.5**。DSH peer 依赖使用兼容范围，避免更新宿主后因精确版本锁定而被安装器拒绝；不支持低于基线的宿主。
 
 ```bash
 dsh plugin --profile web add github:xindong/dsh-client-canvas
