@@ -62,7 +62,7 @@ Web 组合包会安装本包并按顺序启用画布服务与界面，用户无�
 
 `convert` 替换类型、props 和资产引用，保留未覆盖的几何、锁定、可见状态及连线。旧资产不会自动删除，避免影响其他节点。普通 `update` 用于内容或状态变更；失败任务可更新 `props.status` 为 `failed` 并写入 `message`。
 
-`asset_source` 必须且只能有 `path` 或 `url`，可选 `file_name`、`mime_type`、`kind`。相对路径按 DSH 进程工作目录解释。URL 只接受解析到公网地址的 HTTP(S)，不跟随重定向；单文件最多 64 MiB。取消信号会中止正在读取/下载的导入；已经完成的持久化不回滚。
+`asset_source` 必须且只能有 `path` 或 `url`，可选 `file_name`、`mime_type`、`kind`。相对路径按 DSH 进程工作目录解释。导入本地 Markdown/HTML 项目时，可同时传 `root_path` 与 `relative_path`；Core 会保留包内相对路径，并自动导入文档及其 CSS 引用的同包附件。URL 导入会抓取同源资源；URL 只接受解析到公网地址的 HTTP(S)，不跟随重定向。单文件最多 64 MiB；文档资源包最多 128 个文件、128 MiB；预览阶段单条文档最多展开 256 个文档/CSS 资源引用。取消信号会中止正在读取/下载的导入；已经完成的持久化不回滚。
 
 还支持 `delete`（`node_ids`）和 `layout`（`node_ids` 与 `layout`，方向为 horizontal/vertical/grid）。修改前先读取 revision；冲突后重新读取并重新决定修改内容。
 
