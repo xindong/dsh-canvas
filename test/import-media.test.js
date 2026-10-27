@@ -119,6 +119,179 @@ test('media publish backfills legacy hashes, rejects stale hashes, and preserves
   assert.equal(Object.hasOwn(published.nodePatches[0], 'height'), false)
 })
 
+test('pending and error media publications preserve current derivatives only for the same source', async t => {
+  const { service, write, getDocument } = await fixture(t, { mediaProcessor: { probe: imageProbe(2, 1) } })
+  const created = await write({ operations: [{ type: 'create', nodes: [{
+    id: 'video', type: 'video', width: 320, height: 180,
+  }] }] })
+  const assetId = 'video-asset'
+  const originalHash = createHash('sha256').update('source-one').digest('hex')
+  const previousVariant = `preview-${createHash('sha256').update('poster-one').digest('hex')}`
+  const currentVariant = `preview-${createHash('sha256').update('poster-current').digest('hex')}`
+  getDocument().assets.push({
+    id: assetId,
+    kind: 'video',
+    metadata: {
+      contentHash: originalHash,
+      media: { contentHash: originalHash, status: 'ready', width: 1920, height: 1080 },
+      derivatives: { poster: { variant: previousVariant, contentHash: 'a'.repeat(64), mimeType: 'image/webp' } },
+    },
+  })
+  getDocument().nodes[0].assetRefs = {
+    primary: { assetId, variant: 'original' },
+    poster: { assetId, variant: currentVariant },
+  }
+  getDocument().nodes[0].props.mediaContentHash = originalHash
+  await service.putBinary('board', assetId, 'original', Buffer.from('source-one'), { mimeType: 'video/mp4' })
+
+  const pending = await service.publishMedia('board', {
+    assetId, contentHash: originalHash,
+    media: { status: 'pending', width: 1920, height: 1080 },
+    preserveCurrentDerivatives: true,
+    derivatives: {},
+  })
+  assert.equal(pending.applied, true)
+  assert.deepEqual(pending.document.nodes.find(node => node.id === 'video').assetRefs.poster, { assetId, variant: currentVariant })
+  assert.deepEqual(pending.asset.metadata.derivatives.poster.variant, previousVariant)
+
+  const explicitVariant = `preview-${createHash('sha256').update('poster-two').digest('hex')}`
+  const replaced = await service.publishMedia('board', {
+    assetId, contentHash: originalHash,
+    media: { status: 'error', error: 'poster unavailable' },
+    preserveCurrentDerivatives: true,
+    derivatives: { poster: { variant: explicitVariant, contentHash: 'b'.repeat(64), mimeType: 'image/webp' } },
+  })
+  const replacedNode = replaced.document.nodes.find(node => node.id === 'video')
+  assert.deepEqual(replacedNode.assetRefs.poster, { assetId, variant: explicitVariant })
+  assert.deepEqual(replaced.asset.metadata.derivatives.poster.variant, explicitVariant)
+
+  const ready = await service.publishMedia('board', {
+    assetId, contentHash: originalHash,
+    media: { status: 'ready', width: 1920, height: 1080 },
+    preserveCurrentDerivatives: true,
+    derivatives: {},
+  })
+  assert.equal(ready.document.nodes.find(node => node.id === 'video').assetRefs.poster, undefined)
+  assert.deepEqual(ready.asset.metadata.derivatives, {})
+
+  getDocument().assets.find(asset => asset.id === assetId).metadata = {
+    contentHash: originalHash,
+    media: { contentHash: originalHash, status: 'ready', width: 1920, height: 1080 },
+    derivatives: { poster: { variant: previousVariant, contentHash: 'a'.repeat(64), mimeType: 'image/webp' } },
+  }
+  getDocument().nodes[0].assetRefs.poster = { assetId, variant: currentVariant }
+  getDocument().nodes[0].props.mediaContentHash = 'f'.repeat(64)
+  const conflictingNode = await service.publishMedia('board', {
+    assetId, contentHash: originalHash,
+    media: { status: 'pending', width: 1920, height: 1080 },
+    preserveCurrentDerivatives: true,
+  })
+  assert.deepEqual(conflictingNode.document.nodes.find(node => node.id === 'video').assetRefs.poster,
+    { assetId, variant: previousVariant })
+
+  getDocument().assets.find(asset => asset.id === assetId).metadata = {
+    contentHash: originalHash,
+    media: { contentHash: originalHash, status: 'ready', width: 1920, height: 1080 },
+    derivatives: { poster: { variant: previousVariant, contentHash: 'a'.repeat(64), mimeType: 'image/webp' } },
+  }
+  const nextHash = createHash('sha256').update('source-two').digest('hex')
+  await service.putBinary('board', assetId, 'original', Buffer.from('source-two'), { mimeType: 'video/mp4' })
+  delete getDocument().nodes[0].props.mediaContentHash
+  const replacedSource = await service.publishMedia('board', {
+    assetId, contentHash: nextHash,
+    media: { status: 'pending', width: 1280, height: 720 },
+    preserveCurrentDerivatives: true,
+  })
+  assert.equal(replacedSource.document.nodes.find(node => node.id === 'video').assetRefs.poster, undefined)
+  assert.deepEqual(replacedSource.asset.metadata.derivatives, {})
+})
+
+test('legacy error publications keep previous derivatives when the preserve flag is omitted', async t => {
+  const { service, write, getDocument } = await fixture(t)
+  await write({ operations: [{ type: 'create', nodes: [{ id: 'video', type: 'video', width: 320, height: 180 }] }] })
+  const assetId = 'video-asset'
+  const contentHash = createHash('sha256').update('legacy-source').digest('hex')
+  const previousVariant = `preview-${'4'.repeat(64)}`
+  const currentNodeVariant = `preview-${'5'.repeat(64)}`
+  getDocument().assets.push({
+    id: assetId,
+    kind: 'video',
+    metadata: {
+      contentHash,
+      media: { contentHash, status: 'ready', width: 1920, height: 1080 },
+      derivatives: { poster: { variant: previousVariant, contentHash: '6'.repeat(64), mimeType: 'image/webp' } },
+    },
+  })
+  getDocument().nodes[0].assetRefs = {
+    primary: { assetId, variant: 'original' },
+    poster: { assetId, variant: currentNodeVariant },
+  }
+  getDocument().nodes[0].props.mediaContentHash = contentHash
+  await service.putBinary('board', assetId, 'original', Buffer.from('legacy-source'), { mimeType: 'video/mp4' })
+
+  const published = await service.publishMedia('board', {
+    assetId, contentHash,
+    media: { status: 'error', error: 'poster unavailable' },
+  })
+
+  assert.deepEqual(published.document.nodes[0].assetRefs.poster, { assetId, variant: previousVariant })
+  assert.deepEqual(published.asset.metadata.derivatives.poster, {
+    variant: previousVariant, contentHash: '6'.repeat(64), mimeType: 'image/webp',
+  })
+})
+
+test('concurrent media publications preserve derivatives newest node state without resurrecting stale refs', async t => {
+  const { service, write, getDocument } = await fixture(t)
+  await write({ operations: [{ type: 'create', nodes: [{ id: 'audio', type: 'audio', width: 320, height: 96 }] }] })
+  const assetId = 'audio-asset'
+  const hash = createHash('sha256').update('audio-source').digest('hex')
+  const oldVariant = `preview-${'1'.repeat(64)}`
+  const newVariant = `preview-${'2'.repeat(64)}`
+  getDocument().assets.push({
+    id: assetId,
+    kind: 'audio',
+    metadata: {
+      contentHash: hash,
+      media: { contentHash: hash, status: 'ready', duration: 10 },
+      derivatives: { waveform: { variant: oldVariant, contentHash: '3'.repeat(64), mimeType: 'image/webp' } },
+    },
+  })
+  getDocument().nodes[0].assetRefs = {
+    primary: { assetId, variant: 'original' },
+    waveform: { assetId, variant: oldVariant },
+  }
+  getDocument().nodes[0].props.mediaContentHash = hash
+  await service.putBinary('board', assetId, 'original', Buffer.from('audio-source'), { mimeType: 'audio/mpeg' })
+
+  let release
+  const gate = new Promise(resolvePromise => { release = resolvePromise })
+  const blocker = service.enqueue('board', () => gate)
+  const nodeUpdate = service.write('board', {
+    operations: [{ type: 'update', nodes: [{
+      id: 'audio', width: 640,
+      assetRefs: { primary: { assetId, variant: 'original' }, waveform: { assetId, variant: newVariant } },
+    }] }],
+  })
+  const queuedPublication = service.publishMedia('board', {
+    assetId, contentHash: hash,
+    media: { status: 'pending', duration: 10 },
+    preserveCurrentDerivatives: true,
+  })
+  release()
+  await blocker
+  const [updated, published] = await Promise.all([nodeUpdate, queuedPublication])
+  const publishedNode = published.document.nodes[0]
+  const finalNode = getDocument().nodes[0]
+
+  assert.equal(updated.revision < published.revision, true)
+  assert.equal(publishedNode.props.mediaContentHash, hash)
+  assert.equal(finalNode.props.mediaContentHash, hash)
+  assert.equal(publishedNode.width, 640)
+  assert.deepEqual(publishedNode.assetRefs.waveform, { assetId, variant: newVariant })
+  assert.deepEqual(finalNode.assetRefs.waveform, { assetId, variant: newVariant })
+  assert.deepEqual(getDocument().assets.find(asset => asset.id === assetId).metadata.derivatives.waveform.variant, oldVariant)
+})
+
 test('document import keeps the original primary reference while preview is pending', async t => {
   const { root, write } = await fixture(t)
   const documentPath = join(root, 'README.md')
@@ -201,6 +374,128 @@ test('path document import recursively stores same-package attachments inside ro
   }
   assert.equal(node.props.previewStatus, 'pending')
   assert.equal(getDocument().assets.length, 4)
+})
+
+test('path HTML import follows nested and cyclic JavaScript modules, inline modules, and root boundaries', async t => {
+  const { root, write, getDocument } = await fixture(t)
+  const project = join(root, 'project')
+  const docs = join(project, 'docs')
+  const modules = join(docs, 'modules')
+  await mkdir(modules, { recursive: true })
+  await writeFile(join(root, 'outside-html.js'), 'export const outside = true')
+  await writeFile(join(root, 'outside-escape.js'), 'export const escaped = true')
+  await symlink(join(root, 'outside-escape.js'), join(modules, 'escape.js'))
+  await writeFile(join(project, 'outside.js'), 'export const insideRoot = true')
+  await writeFile(join(docs, 'guide.html'), [
+    '<script type="module" src="app.mjs"></script>',
+    '<script src="classic.js"></script>',
+    '<script src="../../outside-html.js"></script>',
+    '<script type="module">',
+    "  import './inline.js?version=1#entry'",
+    "  export * from './inline-export.js'",
+    "  import('./inline-dynamic.mjs')",
+    "  import(`./inline-template.mjs`)",
+    "  import(`./inline-${name}.mjs`)",
+    "  import 'bare-package'",
+    '</script>',
+  ].join('\n'))
+  await writeFile(join(docs, 'app.mjs'), [
+    "import '../outside.js'",
+    "import './modules/cycle-a.js'",
+    "import './modules/escape.js'",
+    "import './modules/definitely-missing.js'",
+    "export { value } from './modules/reexport.js'",
+    "export * from './modules/reexport-star.js'",
+    "import('./modules/dynamic.js')",
+    'import(`./modules/template.mjs`)',
+    'import(`./modules/${name}.js`)',
+    "import '../../outside.js'",
+    "import 'another-package'",
+  ].join('\n'))
+  await writeFile(join(docs, 'classic.js'), 'window.classic = true')
+  await writeFile(join(docs, 'inline.js'), "import './inline-nested.js'")
+  await writeFile(join(docs, 'inline-nested.js'), 'export const nested = true')
+  await writeFile(join(docs, 'inline-export.js'), 'export const inlineExport = true')
+  await writeFile(join(docs, 'inline-dynamic.mjs'), 'export const inlineDynamic = true')
+  await writeFile(join(docs, 'inline-template.mjs'), 'export const inlineTemplate = true')
+  await writeFile(join(modules, 'cycle-a.js'), "import './cycle-b.js'")
+  await writeFile(join(modules, 'cycle-b.js'), "import './cycle-a.js'\nimport '../app.mjs'")
+  await writeFile(join(modules, 'reexport.js'), 'export const value = 1')
+  await writeFile(join(modules, 'reexport-star.js'), 'export const star = 1')
+  await writeFile(join(modules, 'dynamic.js'), 'export const dynamic = true')
+  await writeFile(join(modules, 'template.mjs'), 'export const template = true')
+
+  const result = await write({ operations: [{ type: 'create', nodes: [{
+    id: 'html', type: 'html', asset_source: {
+      path: join(docs, 'guide.html'), root_path: project, relative_path: 'docs/guide.html',
+    },
+  }] }] })
+  const sourceId = result.document.nodes[0].assetRefs.primary.assetId
+  const resources = result.document.assets.filter(asset => asset.metadata.resourceFor === sourceId)
+    .map(asset => asset.metadata.relativePath).sort()
+
+  assert.deepEqual(resources, [
+    'docs/app.mjs',
+    'docs/classic.js',
+    'docs/inline-dynamic.mjs',
+    'docs/inline-export.js',
+    'docs/inline-nested.js',
+    'docs/inline-template.mjs',
+    'docs/inline.js',
+    'docs/modules/cycle-a.js',
+    'docs/modules/cycle-b.js',
+    'docs/modules/dynamic.js',
+    'docs/modules/reexport-star.js',
+    'docs/modules/reexport.js',
+    'docs/modules/template.mjs',
+    'outside.js',
+  ])
+  assert.equal(new Set(resources).size, resources.length)
+  assert.equal(getDocument().assets.some(asset => /outside-(html|escape)\.js$/.test(asset.metadata.relativePath || '')), false)
+})
+
+test('URL JavaScript imports stay same-origin, resolve against each module, and deduplicate cycles', async t => {
+  const { service } = await fixture(t)
+  const requests = []
+  service.readDocumentResource = async ({ task, relativePath }) => {
+    requests.push({ url: task.url, relativePath })
+    let text = 'export const value = true'
+    if (relativePath === 'docs/app') {
+      text = [
+        "import './dep.mjs'",
+        "import '/shared.js'",
+        "import 'https://other.example.test/foreign.js'",
+        "export * from './dep.mjs'",
+      ].join('\n')
+    } else if (relativePath === 'docs/dep.mjs') {
+      text = "import './app'\nimport './leaf.js?version=1'\nimport './leaf.js?version=2'"
+    }
+    const mimeType = relativePath.endsWith('.mjs') || relativePath === 'docs/app' || relativePath === 'shared.js'
+      ? 'application/javascript' : 'image/png'
+    return { data: Buffer.from(text), fileName: relativePath.split('/').pop(), mimeType,
+      text, sourceUrl: task.url, relativePath }
+  }
+  service.storeImportedAsset = async (_boardId, input) => ({
+    asset: { id: input.metadata.relativePath, kind: 'file', metadata: input.metadata },
+  })
+  const source = {
+    sourceType: 'url', documentUrl: 'https://cdn.example.test/docs/index.html',
+    relativePath: 'docs/index.html', physicalFileName: 'index.html', sourcePackage: 'package',
+    data: Buffer.from('<script type="module" src="app"></script>'),
+  }
+
+  await service.importSourceResources('board', source, source.data.length, 'source')
+
+  assert.deepEqual(requests.map(request => request.url), [
+    'https://cdn.example.test/docs/app',
+    'https://cdn.example.test/docs/dep.mjs',
+    'https://cdn.example.test/shared.js',
+    'https://cdn.example.test/docs/leaf.js?version=1',
+    'https://cdn.example.test/docs/leaf.js?version=2',
+  ])
+  assert.deepEqual(requests.map(request => request.relativePath), [
+    'docs/app', 'docs/dep.mjs', 'shared.js', 'docs/leaf.js', 'docs/leaf.js',
+  ])
 })
 
 test('local Markdown, HTML, and CSS decode URL paths once and enforce root boundaries', async t => {
