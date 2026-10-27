@@ -268,6 +268,34 @@ test('legacy error publications prefer a current derivative and fall back to pre
   assert.equal(removed.asset.metadata.derivatives.poster, null)
 })
 
+test('legacy asset hashes prevent preserving a derivative after the binary source changes', async t => {
+  const { service, write, getDocument } = await fixture(t)
+  await write({ operations: [{ type: 'create', nodes: [{ id: 'video', type: 'video', width: 320, height: 180 }] }] })
+  const assetId = 'video-asset'
+  const oldHash = createHash('sha256').update('legacy-source-a').digest('hex')
+  const newHash = createHash('sha256').update('legacy-source-b').digest('hex')
+  const currentVariant = `preview-${'9'.repeat(64)}`
+  getDocument().assets.push({
+    id: assetId,
+    kind: 'video',
+    metadata: { contentHash: oldHash },
+  })
+  getDocument().nodes[0].assetRefs = {
+    primary: { assetId, variant: 'original' },
+    poster: { assetId, variant: currentVariant },
+  }
+  await service.putBinary('board', assetId, 'original', Buffer.from('legacy-source-b'), { mimeType: 'video/mp4' })
+
+  const published = await service.publishMedia('board', {
+    assetId, contentHash: newHash,
+    media: { status: 'error', error: 'poster unavailable' },
+  })
+
+  assert.equal(published.applied, true)
+  assert.equal(published.document.nodes[0].assetRefs.poster, undefined)
+  assert.deepEqual(published.asset.metadata.derivatives, {})
+})
+
 test('concurrent media publications preserve derivatives newest node state without resurrecting stale refs', async t => {
   const { service, write, getDocument } = await fixture(t)
   await write({ operations: [{ type: 'create', nodes: [{ id: 'audio', type: 'audio', width: 320, height: 96 }] }] })
