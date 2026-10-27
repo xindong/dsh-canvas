@@ -258,6 +258,14 @@ test('legacy error publications prefer a current derivative and fall back to pre
   })
   assert.deepEqual(explicit.document.nodes[0].assetRefs.poster, { assetId, variant: explicitVariant })
   assert.deepEqual(explicit.asset.metadata.derivatives.poster.variant, explicitVariant)
+
+  const removed = await service.publishMedia('board', {
+    assetId, contentHash,
+    media: { status: 'error', error: 'poster removed' },
+    derivatives: { poster: null },
+  })
+  assert.equal(removed.document.nodes[0].assetRefs.poster, undefined)
+  assert.equal(removed.asset.metadata.derivatives.poster, null)
 })
 
 test('concurrent media publications preserve derivatives newest node state without resurrecting stale refs', async t => {
@@ -516,6 +524,58 @@ test('URL JavaScript imports stay same-origin, resolve against each module, and 
   assert.deepEqual(requests.map(request => request.relativePath), [
     'docs/app', 'docs/dep.mjs', 'shared.js', 'docs/leaf.js', 'docs/leaf.js',
   ])
+})
+
+test('JavaScript MIME types follow modules with other extensions and cjs without overriding document extensions', async t => {
+  const { service } = await fixture(t)
+  const requests = []
+  service.readDocumentResource = async ({ task, relativePath }) => {
+    requests.push({ url: task.url, relativePath })
+    const modules = new Map([
+      ['docs/module.php', "import './mime-dep.js'\nimport './mime-nested.cjs'"],
+      ['docs/mime-dep.js', "import './x-javascript-dep.js'"],
+      ['docs/mime-nested.cjs', 'export const nested = true'],
+      ['docs/x-javascript-dep.js', 'export const dep = true'],
+    ])
+    if (modules.has(relativePath)) {
+      const text = modules.get(relativePath)
+      const mimeType = relativePath.endsWith('.cjs') ? 'text/javascript'
+        : relativePath === 'docs/module.php' ? 'application/x-javascript; charset=utf-8'
+          : relativePath === 'docs/x-javascript-dep.js' ? 'text/x-javascript' : 'application/javascript'
+      return { data: Buffer.from(text), fileName: relativePath.split('/').pop(), mimeType, text,
+        sourceUrl: task.url, relativePath }
+    }
+    return { data: Buffer.from('<p>document</p>'), fileName: relativePath.split('/').pop(),
+      mimeType: 'text/html', text: '<p>document</p>', sourceUrl: task.url, relativePath }
+  }
+  service.storeImportedAsset = async (_boardId, input) => ({
+    asset: { id: input.metadata.relativePath, kind: 'file', metadata: input.metadata },
+  })
+  const source = {
+    sourceType: 'url', documentUrl: 'https://cdn.example.test/docs/index.html',
+    relativePath: 'docs/index.html', physicalFileName: 'index.html', sourcePackage: 'package',
+    data: Buffer.from('<script type="module" src="module.php"></script>'),
+  }
+
+  await service.importSourceResources('board', source, source.data.length, 'source')
+
+  assert.deepEqual(requests.map(request => request.relativePath), [
+    'docs/module.php', 'docs/mime-dep.js', 'docs/mime-nested.cjs', 'docs/x-javascript-dep.js',
+  ])
+
+  requests.length = 0
+  const misleadingMimeSource = {
+    sourceType: 'url', documentUrl: 'https://cdn.example.test/docs/index.css',
+    relativePath: 'docs/index.css', physicalFileName: 'index.css', mimeType: 'text/html', sourcePackage: 'package',
+    data: Buffer.from('@import "style-dep.css";'),
+  }
+  service.readDocumentResource = async ({ task, relativePath }) => {
+    requests.push({ url: task.url, relativePath })
+    return { data: Buffer.from('body {}'), fileName: relativePath.split('/').pop(), mimeType: 'application/javascript',
+      text: 'body {}', sourceUrl: task.url, relativePath }
+  }
+  await service.importSourceResources('board', misleadingMimeSource, misleadingMimeSource.data.length, 'source')
+  assert.deepEqual(requests.map(request => request.relativePath).sort(), ['docs/style-dep.css'])
 })
 
 test('local Markdown, HTML, and CSS decode URL paths once and enforce root boundaries', async t => {
