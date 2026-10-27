@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CanvasService } from '../lib/index.js'
@@ -203,6 +203,71 @@ test('path document import recursively stores same-package attachments inside ro
   assert.equal(getDocument().assets.length, 4)
 })
 
+test('local Markdown, HTML, and CSS decode URL paths once and enforce root boundaries', async t => {
+  const { root, write } = await fixture(t)
+  const project = join(root, 'project')
+  const docs = join(project, 'docs')
+  await mkdir(join(docs, 'img'), { recursive: true })
+  await writeFile(join(root, 'outside.png'), PNG_1X1)
+  await symlink(join(root, 'outside.png'), join(docs, 'img', 'escape link.png'))
+  await writeFile(join(docs, 'guide.md'), [
+    '![space](img/my%20logo.png?version=1#part)',
+    '![unicode](img/caf%C3%A9.png)',
+    '![percent](img/literal%2520name.png)',
+    '![reserved](img/hash%23question%3F.png)',
+    '![separator](img%2Fslash.png)',
+    '![escape](..%2F..%2Foutside.png)',
+    '![escape-backslash](..%5C..%5Coutside.png)',
+    '![escape-dots](%2e%2e/%2e%2e/outside.png)',
+    '![symlink](img/escape%20link.png)',
+    '<img src="img/html%20image.png">',
+    '<link rel="stylesheet" href="style%20sheet.css">',
+  ].join('\n'))
+  await writeFile(join(docs, 'style sheet.css'), 'body { background: url("img/css%20image.png?x=1#part") }')
+  for (const path of ['my logo.png', 'café.png', 'literal%20name.png', 'hash#question?.png', 'slash.png', 'html image.png', 'css image.png']) {
+    await writeFile(join(docs, 'img', path), PNG_1X1)
+  }
+
+  const result = await write({ operations: [{ type: 'create', nodes: [{
+    id: 'guide', type: 'markdown', asset_source: { path: join(docs, 'guide.md'), root_path: project },
+  }] }] })
+  const sourceId = result.document.nodes[0].assetRefs.primary.assetId
+  const resources = result.document.assets.filter(asset => asset.metadata.resourceFor === sourceId)
+    .map(asset => asset.metadata.relativePath).sort()
+  assert.deepEqual(resources, [
+    'docs/img/café.png', 'docs/img/css image.png', 'docs/img/hash#question?.png', 'docs/img/html image.png',
+    'docs/img/literal%20name.png', 'docs/img/my logo.png', 'docs/img/slash.png', 'docs/style sheet.css',
+  ])
+})
+
+test('Markdown inline image destinations and quoted titles can contain closing parentheses', async t => {
+  const { root, write } = await fixture(t)
+  const project = join(root, 'project')
+  const docs = join(project, 'docs')
+  await mkdir(join(docs, 'img'), { recursive: true })
+  await writeFile(join(docs, 'guide.md'), [
+    '![angle](<img/a)b.png>)',
+    '![angle-title](<img/a)b.png> "Version (large)")',
+    '![quoted](img/b.png "Version (large)")',
+    '![escaped-title](img/b.png "Version \\\"(large)\\\"")',
+    "![single](img/c.png 'Version (large)')",
+    '![paren-title](img/d.png (Version large))',
+    '![broken](<img/missing.png)',
+    '![next](img/e.png)',
+  ].join('\n'))
+  for (const name of ['a)b.png', 'b.png', 'c.png', 'd.png', 'e.png', 'missing.png']) {
+    await writeFile(join(docs, 'img', name), PNG_1X1)
+  }
+
+  const result = await write({ operations: [{ type: 'create', nodes: [{
+    id: 'guide', type: 'markdown', asset_source: { path: join(docs, 'guide.md'), root_path: project },
+  }] }] })
+  const sourceId = result.document.nodes[0].assetRefs.primary.assetId
+  const resources = result.document.assets.filter(asset => asset.metadata.resourceFor === sourceId)
+    .map(asset => asset.metadata.relativePath).sort()
+  assert.deepEqual(resources, ['docs/img/a)b.png', 'docs/img/b.png', 'docs/img/c.png', 'docs/img/d.png', 'docs/img/e.png'])
+})
+
 test('document import ignores navigation targets and keeps loaded resources', async t => {
   const { root, write } = await fixture(t)
   const project = join(root, 'project')
@@ -318,6 +383,10 @@ test('document scanning stays linear under repeated unterminated URL, tag, and M
   const repeatedCss = 'url("a'.repeat(20_000)
   const repeatedTags = '<img src="'.repeat(20_000)
   const repeatedMarkdown = '!['.repeat(20_000)
+  const repeatedMarkdownLabels = '!['.repeat(20_000) + ']'
+  const repeatedMarkdownReferences = '![x][unclosed'.repeat(20_000) + ']'
+  const repeatedMarkdownAngles = '![x](<unterminated'.repeat(20_000)
+  const repeatedMarkdownTitles = '![x](image.png "unterminated'.repeat(20_000)
   const repeatedComments = '<!--'.repeat(20_000)
   const unterminatedQuotedTag = '<img title="<!--' + '<img '.repeat(20_000)
   const repeatedClosedComments = '<!--x-->'.repeat(20_000)
@@ -330,11 +399,15 @@ test('document scanning stays linear under repeated unterminated URL, tag, and M
   const cssAssets = await service.importSourceResources('board', source('styles/guide.css', repeatedCss), repeatedCss.length, 'css')
   const htmlAssets = await service.importSourceResources('board', source('guide.html', `${repeatedTags}${repeatedComments}`), repeatedTags.length + repeatedComments.length, 'html')
   const markdownAssets = await service.importSourceResources('board', source('guide.md', repeatedMarkdown), repeatedMarkdown.length, 'markdown')
+  const labelAssets = await service.importSourceResources('board', source('labels.md', repeatedMarkdownLabels), repeatedMarkdownLabels.length, 'labels')
+  const referenceAssets = await service.importSourceResources('board', source('references.md', repeatedMarkdownReferences), repeatedMarkdownReferences.length, 'references')
+  const angleAssets = await service.importSourceResources('board', source('angles.md', repeatedMarkdownAngles), repeatedMarkdownAngles.length, 'angles')
+  const titleAssets = await service.importSourceResources('board', source('titles.md', repeatedMarkdownTitles), repeatedMarkdownTitles.length, 'titles')
   const quotedAssets = await service.importSourceResources('board', source('quoted.html', unterminatedQuotedTag), unterminatedQuotedTag.length, 'quoted')
   const commentAssets = await service.importSourceResources('board', source('comments.html', repeatedClosedComments), repeatedClosedComments.length, 'comments')
   const elapsed = performance.now() - started
 
-  assert.deepEqual([cssAssets, htmlAssets, markdownAssets, quotedAssets, commentAssets], [[], [], [], [], []])
+  assert.deepEqual([cssAssets, htmlAssets, markdownAssets, labelAssets, referenceAssets, angleAssets, titleAssets, quotedAssets, commentAssets], [[], [], [], [], [], [], [], [], []])
   assert.ok(elapsed < 5_000, `repeated malformed syntax took ${elapsed.toFixed(0)}ms`)
 })
 
