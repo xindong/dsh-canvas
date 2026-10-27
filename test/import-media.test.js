@@ -121,7 +121,7 @@ test('media publish backfills legacy hashes, rejects stale hashes, and preserves
 
 test('pending and error media publications preserve current derivatives only for the same source', async t => {
   const { service, write, getDocument } = await fixture(t, { mediaProcessor: { probe: imageProbe(2, 1) } })
-  const created = await write({ operations: [{ type: 'create', nodes: [{
+  await write({ operations: [{ type: 'create', nodes: [{
     id: 'video', type: 'video', width: 320, height: 180,
   }] }] })
   const assetId = 'video-asset'
@@ -206,7 +206,7 @@ test('pending and error media publications preserve current derivatives only for
   assert.deepEqual(replacedSource.asset.metadata.derivatives, {})
 })
 
-test('legacy error publications keep previous derivatives when the preserve flag is omitted', async t => {
+test('legacy error publications prefer a current derivative and fall back to previous when absent', async t => {
   const { service, write, getDocument } = await fixture(t)
   await write({ operations: [{ type: 'create', nodes: [{ id: 'video', type: 'video', width: 320, height: 180 }] }] })
   const assetId = 'video-asset'
@@ -234,10 +234,30 @@ test('legacy error publications keep previous derivatives when the preserve flag
     media: { status: 'error', error: 'poster unavailable' },
   })
 
-  assert.deepEqual(published.document.nodes[0].assetRefs.poster, { assetId, variant: previousVariant })
+  assert.deepEqual(published.document.nodes[0].assetRefs.poster, { assetId, variant: currentNodeVariant })
   assert.deepEqual(published.asset.metadata.derivatives.poster, {
     variant: previousVariant, contentHash: '6'.repeat(64), mimeType: 'image/webp',
   })
+
+  delete getDocument().nodes[0].assetRefs.poster
+  const fallback = await service.publishMedia('board', {
+    assetId, contentHash,
+    media: { status: 'error', error: 'poster unavailable' },
+  })
+  assert.deepEqual(fallback.document.nodes[0].assetRefs.poster, { assetId, variant: previousVariant })
+
+  getDocument().assets.find(asset => asset.id === assetId).metadata.derivatives = {
+    poster: { variant: previousVariant, contentHash: '6'.repeat(64), mimeType: 'image/webp' },
+  }
+  getDocument().nodes[0].assetRefs.poster = { assetId, variant: currentNodeVariant }
+  const explicitVariant = `preview-${'7'.repeat(64)}`
+  const explicit = await service.publishMedia('board', {
+    assetId, contentHash,
+    media: { status: 'error', error: 'poster unavailable' },
+    derivatives: { poster: { variant: explicitVariant, contentHash: '8'.repeat(64), mimeType: 'image/webp' } },
+  })
+  assert.deepEqual(explicit.document.nodes[0].assetRefs.poster, { assetId, variant: explicitVariant })
+  assert.deepEqual(explicit.asset.metadata.derivatives.poster.variant, explicitVariant)
 })
 
 test('concurrent media publications preserve derivatives newest node state without resurrecting stale refs', async t => {
