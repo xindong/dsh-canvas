@@ -100,6 +100,8 @@ viewport 可单独调用，也可与节点事务一起提交。它是 30 秒有�
 
 默认保存到 `$DSH_HOME/canvas`，未设置 DSH_HOME 时为 `~/.dsh/canvas`。目录配置损坏或目录无法创建、写入时，服务会尝试配置的默认目录，再回退到 `$DSH_HOME/canvas`，保证画布仍可启动；恢复不会搬移或删除原数据。文档使用扁平的 PixiBoard schema v1；节点包含整数 `typeVersion`，通过 `assetRefs` 引用 assets。连线唯一位置为 `document.metadata.connections`。
 
+以上目录均不可用时，服务会创建独立的系统临时恢复目录，并在目录设置中返回实际路径和 `recovery.temporary: true`。每次启动可能使用不同的临时目录，系统也可能清理其中的数据；请在重启 DSH 前备份实际目录，或导出需要保留的内容，并在设置中选择可用的持久目录。
+
 - 画布文档和资源：`<root>`、`<root>/assets`。
 - 名称与创建时间：`<root>/meta`。
 - Agent 提示词设置：`<root>/settings/prompts.json`，独立 revision。
