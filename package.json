@@ -1,6 +1,6 @@
 {
   "name": "@xindong/dsh-canvas",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "UI-neutral persistent canvas service and Agent tools for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",

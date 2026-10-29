@@ -98,7 +98,7 @@ viewport 可单独调用，也可与节点事务一起提交。它是 30 秒有�
 
 ## 数据与设置
 
-默认保存到 `$DSH_HOME/canvas`，未设置 DSH_HOME 时为 `~/.dsh/canvas`。文档使用扁平的 PixiBoard schema v1；节点包含整数 `typeVersion`，通过 `assetRefs` 引用 assets。连线唯一位置为 `document.metadata.connections`。
+默认保存到 `$DSH_HOME/canvas`，未设置 DSH_HOME 时为 `~/.dsh/canvas`。目录配置损坏或目录无法创建、写入时，服务会尝试配置的默认目录，再回退到 `$DSH_HOME/canvas`，保证画布仍可启动；恢复不会搬移或删除原数据。文档使用扁平的 PixiBoard schema v1；节点包含整数 `typeVersion`，通过 `assetRefs` 引用 assets。连线唯一位置为 `document.metadata.connections`。
 
 - 画布文档和资源：`<root>`、`<root>/assets`。
 - 名称与创建时间：`<root>/meta`。
